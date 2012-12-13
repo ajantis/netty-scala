@@ -3,10 +3,11 @@ package org.ajantis.nettyfun
 import java.net.InetSocketAddress
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.channel.socket.nio.{NioServerSocketChannel, NioEventLoopGroup}
-import io.netty.channel.{ChannelHandlerContext, ChannelInitializer, ChannelOption}
+import io.netty.channel.{ChannelInboundMessageHandlerAdapter, ChannelHandlerContext, ChannelInitializer, ChannelOption}
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.timeout.{IdleStateEvent, IdleStateHandler}
-import io.netty.handler.codec.http.{HttpContentCompressor, HttpRequestEncoder, HttpRequestDecoder}
+import io.netty.handler.codec.http._
+import io.netty.channel.ChannelHandler.Sharable
 
 /**
  * Copyright iFunSoftware 2011
@@ -23,21 +24,29 @@ object NettyServer {
       .childOption[java.lang.Boolean](ChannelOption.SO_KEEPALIVE, true)
       .childOption[java.lang.Boolean](ChannelOption.SO_REUSEADDR, true)
       .childOption[java.lang.Integer](ChannelOption.SO_LINGER, 0)
-      .childHandler(new ChannelInitializer[SocketChannel] {
-      def initChannel(p1: SocketChannel) {
-        val p = p1.pipeline()
-        p.addLast("timeout", new IdleStateHandler(0, 110, 0){
-          override def channelIdle(ctx: ChannelHandlerContext, edx: IdleStateEvent){
-            ctx.channel().close()
-          }
-        })
-        p.addLast("decoder", HttpRequestDecoder)
-        p.addLast("encoder", HttpRequestEncoder)
-        p.addLast("deflater", HttpContentCompressor)
-      }
-    })
+      .childHandler(new AkkaChannelInitializer)
 
     srv.bind().sync()
     println("Listening on %s:%s", addr.getAddress.getHostAddress, addr.getPort)
+  }
+}
+
+case class Session(ctx: ChannelHandlerContext){
+  val created = new java.util.Date
+  val ch = ctx.channel
+}
+
+@Sharable
+class AkkaServerHandler extends ChannelInboundMessageHandlerAdapter[Object]{
+
+  override def exceptionCaught(ctx: ChannelHandlerContext, t: Throwable){}
+
+  override def messageReceived(ctx: ChannelHandlerContext, msg: Object) {
+    msg match {
+      case http: HttpRequest => AkkaManager.actor ! Session(ctx)
+      case _ => // too bad
+        println("unsupported frame")
+        ctx.channel.write(HttpResponseStatus.BAD_REQUEST)
+    }
   }
 }
